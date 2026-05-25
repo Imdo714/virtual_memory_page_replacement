@@ -124,7 +124,8 @@ public class SimulationRunner implements CommandLineRunner {
     // ─── 시뮬레이션 실행 ──────────────────────────────────────────────────────
 
     private void simulate(String algorithmType, int frameCount, int[] referenceString) {
-        PageReplacementAlgorithm algorithm = AlgorithmFactory.create(algorithmType, frameCount);
+        // referenceString을 함께 전달 — FIFO 등은 무시하고, Optimal은 미래 참조 계산에 활용
+        PageReplacementAlgorithm algorithm = AlgorithmFactory.create(algorithmType, frameCount, referenceString);
         Simulator simulator = new Simulator(algorithm);
         SimulationResult result = simulator.run(referenceString);
         printer.print(result);
