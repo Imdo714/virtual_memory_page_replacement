@@ -13,7 +13,7 @@ public class FIFOAlgorithm implements PageReplacementAlgorithm {
 
     private final int frameCount;
     private final Queue<Integer> queue; // FIFO는 Queue 자료구조 사용
-    private final Set<Integer> frameSet;
+    private final Set<Integer> frameSet; // 현재 프레임 관리 Set 자료구조 사용
 
     public FIFOAlgorithm(int frameCount) {
         if (frameCount <= 0) throw new IllegalArgumentException("Frame count must be positive.");
