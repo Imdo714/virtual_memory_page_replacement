@@ -1,6 +1,7 @@
 package com.page;
 
 import com.page.algorithm.AlgorithmFactory;
+import com.page.algorithm.EvictCountAlgorithm;
 import com.page.algorithm.PageReplacementAlgorithm;
 import com.page.model.SimulationResult;
 import com.page.printer.ConsoleResultPrinter;
@@ -10,6 +11,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Scanner;
 
 /**
@@ -124,11 +126,36 @@ public class SimulationRunner implements CommandLineRunner {
     // ─── 시뮬레이션 실행 ──────────────────────────────────────────────────────
 
     private void simulate(String algorithmType, int frameCount, int[] referenceString) {
-        // referenceString을 함께 전달 — FIFO 등은 무시하고, Optimal은 미래 참조 계산에 활용
         PageReplacementAlgorithm algorithm = AlgorithmFactory.create(algorithmType, frameCount, referenceString);
         Simulator simulator = new Simulator(algorithm);
         SimulationResult result = simulator.run(referenceString);
         printer.print(result);
+
+        // EvictCount 알고리즘은 퇴출 횟수 이력 테이블을 추가 출력
+        if (algorithm instanceof EvictCountAlgorithm evictAlgo) {
+            printEvictCountTable(evictAlgo.getEvictCounts());
+        }
+    }
+
+    private void printEvictCountTable(Map<Integer, Integer> evictCounts) {
+        int w = 36;
+        System.out.println("+" + "-".repeat(w) + "+");
+        System.out.printf("|%-" + w + "s|%n", "  [ Evict Count Table ]");
+        System.out.println("+" + "-".repeat(w) + "+");
+        System.out.printf("|  %-15s  %-15s|%n", "Page", "Evict Count");
+        System.out.println("+" + "-".repeat(w) + "+");
+
+        if (evictCounts.isEmpty()) {
+            System.out.printf("|%-" + w + "s|%n", "  (퇴출된 페이지 없음)");
+        } else {
+            evictCounts.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(e ->
+                        System.out.printf("|  %-15d  %-15d|%n", e.getKey(), e.getValue())
+                    );
+        }
+        System.out.println("+" + "-".repeat(w) + "+");
+        System.out.println();
     }
 
 }
