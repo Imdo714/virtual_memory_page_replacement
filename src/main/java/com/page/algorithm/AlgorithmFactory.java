@@ -9,6 +9,7 @@ public class AlgorithmFactory {
     private static final List<String> SUPPORTED = List.of(
             "FIFO",
             "Optimal",
+            "LRU",
             "EvictCount"
     );
 
@@ -30,6 +31,7 @@ public class AlgorithmFactory {
         return switch (type.toUpperCase()) {
             case "FIFO"       -> new FIFOAlgorithm(frameCount);
             case "OPTIMAL"    -> new OptimalAlgorithm(frameCount, referenceString);
+            case "LRU"        -> new LRUAlgorithm(frameCount);
             case "EVICTCOUNT" -> new EvictCountAlgorithm(frameCount);
             default -> throw new IllegalArgumentException("지원하지 않는 알고리즘: " + type);
         };
