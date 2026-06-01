@@ -10,6 +10,7 @@ public class AlgorithmFactory {
             "FIFO",
             "Optimal",
             "LRU",
+            "NUR",
             "EvictCount"
     );
 
@@ -32,6 +33,7 @@ public class AlgorithmFactory {
             case "FIFO"       -> new FIFOAlgorithm(frameCount);
             case "OPTIMAL"    -> new OptimalAlgorithm(frameCount, referenceString);
             case "LRU"        -> new LRUAlgorithm(frameCount);
+            case "NUR"        -> new NURAlgorithm(frameCount);
             case "EVICTCOUNT" -> new EvictCountAlgorithm(frameCount);
             default -> throw new IllegalArgumentException("지원하지 않는 알고리즘: " + type);
         };
