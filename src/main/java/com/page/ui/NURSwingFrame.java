@@ -355,13 +355,13 @@ public class NURSwingFrame extends JFrame {
 
     private String formatBasicDetail(PageReplacementAlgorithm algorithm) {
         if (algorithm instanceof EvictCountAlgorithm evictCountAlgorithm) {
-            Map<Integer, Integer> counts = evictCountAlgorithm.getEvictCounts();
-            if (counts.isEmpty()) {
+            Map<Integer, EvictCountAlgorithm.EvictRecord> history = evictCountAlgorithm.getEvictHistory();
+            if (history.isEmpty()) {
                 return "Evict Count: -";
             }
-            return counts.entrySet().stream()
+            return history.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey())
-                    .map(entry -> entry.getKey() + "=" + entry.getValue())
+                    .map(entry -> entry.getKey() + "=" + entry.getValue().count())
                     .collect(Collectors.joining(", ", "Evict Count: ", ""));
         }
 

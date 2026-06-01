@@ -192,7 +192,7 @@ public class SimulationRunner implements CommandLineRunner {
         printer.print(result);
 
         if (algorithm instanceof EvictCountAlgorithm evictAlgo) {
-            printEvictCountTable(evictAlgo.getEvictCounts());
+            printEvictCountTable(evictAlgo.getEvictHistory());
         }
     }
 
@@ -240,21 +240,24 @@ public class SimulationRunner implements CommandLineRunner {
                 .orElse("");
     }
 
-    private void printEvictCountTable(Map<Integer, Integer> evictCounts) {
-        int w = 36;
+    private void printEvictCountTable(Map<Integer, EvictCountAlgorithm.EvictRecord> evictHistory) {
+        int w = 48;
         System.out.println("+" + "-".repeat(w) + "+");
         System.out.printf("|%-" + w + "s|%n", "  [ Evict Count Table ]");
         System.out.println("+" + "-".repeat(w) + "+");
-        System.out.printf("|  %-15s  %-15s|%n", "Page", "Evict Count");
+        System.out.printf("|  %-12s  %-12s  %-12s|%n", "Page", "Evict Count", "Last Evict");
         System.out.println("+" + "-".repeat(w) + "+");
 
-        if (evictCounts.isEmpty()) {
+        if (evictHistory.isEmpty()) {
             System.out.printf("|%-" + w + "s|%n", "  (퇴출된 페이지 없음)");
         } else {
-            evictCounts.entrySet().stream()
+            evictHistory.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey())
                     .forEach(e ->
-                            System.out.printf("|  %-15d  %-15d|%n", e.getKey(), e.getValue())
+                            System.out.printf("|  %-12d  %-12d  %-12d|%n",
+                                    e.getKey(),
+                                    e.getValue().count(),
+                                    e.getValue().lastEvictedAt())
                     );
         }
         System.out.println("+" + "-".repeat(w) + "+");

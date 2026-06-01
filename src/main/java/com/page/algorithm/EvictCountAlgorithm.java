@@ -6,7 +6,7 @@ import java.util.*;
 
 /**
  * ════════════════════════════════════════════════════════════════
- *  Evict-Count Based 커스텀 페이지 교체 알고리즘
+ *  Evict-Count Based 커스텀 페이지 교체 알고리즘 (개선판)
  * ════════════════════════════════════════════════════════════════
  *
  * [아이디어]
@@ -15,61 +15,126 @@ import java.util.*;
  *   evict count가 높을수록 = 자주 필요했던 페이지 = 프레임에서 보호
  *   evict count가 낮을수록 = 덜 중요한 페이지  = 교체 우선 대상
  *
- * [교체 방식]
- *   1. Page Hit  : 해당 페이지를 frames의 맨 뒤로 재삽입
- *                  → FIFO 타이브레이킹 시 가장 늦게 쫓겨나도록 수명 연장
- *   2. Page Fault: frames에서 evict count가 가장 낮은 페이지를 victim으로 선택
- *                  → 동점(evict count 동일)이면 삽입 순서(FIFO)로 결정
- *                  → 퇴출된 페이지의 evict count +1 누적
+ * [개선 사항]
+ *   1. Cold Start 보완
+ *      - accessCount(참조 횟수)를 복합 점수에 반영
+ *      - 초반 evictCount = 0 구간에서 덜 참조된 페이지가 먼저 쫓겨남
+ *      - score = evictCount * EVICT_WEIGHT + accessCount
+ *
+ *   2. 순환 참조 취약 보완 — 시간 감쇠(Time Decay)
+ *      - 마지막 퇴출 시점(tick)을 함께 기록
+ *      - 오래된 evict 이력일수록 score 가중치 감소
+ *      - decayedEvict = evictCount / (1.0 + age * DECAY_RATE)
+ *
+ *   3. Hit 시 재배치 제거 — LRU 타이브레이킹
+ *      - 기존 Hit 시 frames 재삽입 제거 (부작용 원인)
+ *      - 대신 lastAccessTime 맵으로 최근 접근 시점 추적
+ *      - score 동점이면 가장 오래전에 접근한 페이지를 victim 선택 (LRU 방식)
+ *
+ *   4. reset 모드 분리
+ *      - reset()         : 프레임 + 이력 완전 초기화
+ *      - resetFramesOnly(): 프레임만 초기화, 이력(evictHistory) 유지
+ *
+ * [Victim 선정 복합 점수]
+ *   age           = tick - lastEvictedAt          (마지막 퇴출 이후 경과 tick)
+ *   decayedEvict  = evictCount / (1.0 + age * DECAY_RATE)
+ *   score         = decayedEvict * EVICT_WEIGHT + accessCount
+ *   → score 최솟값 페이지가 victim
+ *   → score 동점이면 lastAccessTime 오래된 페이지 (LRU 타이브레이킹)
  *
  * [자료구조]
- *   LinkedHashSet<Integer> frames
- *     - 삽입 순서 유지  : FIFO 타이브레이킹에 활용 (순회 시 오래된 순으로 등장)
- *     - O(1) contains  : 히트 여부 즉시 판별
- *     - O(1) remove    : victim 제거 시 Queue처럼 O(n) 탐색 불필요
- *     → Queue(순서) + HashSet(조회) 두 자료구조의 역할을 하나로 통합
+ *   Set<Integer> frames
+ *     - O(1) contains : 히트 여부 즉시 판별
+ *     - O(1) remove   : victim 제거
  *
- *   Map<Integer, Integer> evictCounts
+ *   Map<Integer, EvictRecord> evictHistory
  *     - key  : 페이지 번호
- *     - value: 누적 퇴출 횟수 (시뮬레이션 전체에 걸쳐 유지)
+ *     - value: 누적 퇴출 횟수 + 마지막 퇴출 tick
+ *
+ *   Map<Integer, Integer> accessCount
+ *     - key  : 페이지 번호
+ *     - value: 누적 참조 횟수 (Cold Start 보완용)
+ *
+ *   Map<Integer, Integer> lastAccessTime
+ *     - key  : 페이지 번호
+ *     - value: 마지막 접근 tick (LRU 타이브레이킹용)
  *
  * [시간 복잡도]
  *   accessPage : O(1) — contains, remove, add 모두 O(1)
  *   findVictim : O(n) — 프레임 전체를 1-pass로 순회 (n = frameCount)
+ *
+ * [하이퍼파라미터]
+ *   DECAY_RATE   : 시간 감쇠 강도 (클수록 오래된 이력 빠르게 소멸)
+ *   EVICT_WEIGHT : evictCount vs accessCount 가중치 비율
  * ════════════════════════════════════════════════════════════════
  */
 public class EvictCountAlgorithm implements PageReplacementAlgorithm {
 
-    private final int frameCount;
-    private final LinkedHashSet<Integer> frames; // 삽입 순서 유지 + O(1) 조회/삭제
-    private final Map<Integer, Integer> evictCounts; // 페이지별 퇴출 횟수 이력 테이블
+    /** 시간 감쇠 강도: 값이 클수록 오래된 evict 이력의 영향력이 빠르게 줄어든다 */
+    private static final double DECAY_RATE   = 0.05;
+    /** evictCount 가중치: accessCount 대비 evict 신호를 얼마나 강하게 볼 것인가 */
+    private static final double EVICT_WEIGHT = 2.0;
 
-    public EvictCountAlgorithm(int frameCount) {
-        if (frameCount <= 0) throw new IllegalArgumentException("Frame count must be positive.");
-        this.frameCount  = frameCount;
-        this.frames      = new LinkedHashSet<>();
-        this.evictCounts = new HashMap<>();
+    private final int frameCount;
+    private final Set<Integer>              frames;         // 현재 프레임 (O(1) 조회/삭제)
+    private final Map<Integer, EvictRecord> evictHistory;   // 퇴출 횟수 + 마지막 퇴출 tick
+    private final Map<Integer, Integer>     accessCount;    // 누적 참조 횟수 (Cold Start 보완)
+    private final Map<Integer, Integer>     lastAccessTime; // 마지막 접근 tick (LRU 타이브레이킹)
+    private int tick; // 논리 시계 (accessPage 호출마다 +1)
+
+    // ── 퇴출 이력 레코드 ────────────────────────────────────────────────────
+    /**
+     * 페이지별 퇴출 이력
+     *
+     * @param count         누적 퇴출 횟수
+     * @param lastEvictedAt 마지막으로 퇴출된 tick (시간 감쇠 계산에 사용)
+     */
+    public record EvictRecord(int count, int lastEvictedAt) {
+        EvictRecord increment(int currentTick) {
+            return new EvictRecord(count + 1, currentTick);
+        }
     }
 
+    // ── 생성자 ──────────────────────────────────────────────────────────────
+    public EvictCountAlgorithm(int frameCount) {
+        if (frameCount <= 0) throw new IllegalArgumentException("Frame count must be positive.");
+        this.frameCount      = frameCount;
+        this.frames          = new HashSet<>();
+        this.evictHistory    = new HashMap<>();
+        this.accessCount     = new HashMap<>();
+        this.lastAccessTime  = new HashMap<>();
+        this.tick            = 0;
+    }
+
+    // ── 핵심 로직 ────────────────────────────────────────────────────────────
     @Override
     public SimulationStep accessPage(int pageNumber) {
-        // ── Page Hit ──────────────────────────────────────────────────────────
+        tick++;
+
+        // ── Page Hit ─────────────────────────────────────────────────────────
         if (frames.contains(pageNumber)) {
-            // 맨 뒤로 재삽입 → FIFO 타이브레이킹 시 수명 연장
-            frames.remove(pageNumber);
-            frames.add(pageNumber);
+            // Hit 시 재삽입 제거 — lastAccessTime 갱신만으로 LRU 타이브레이킹 처리
+            accessCount.merge(pageNumber, 1, Integer::sum);
+            lastAccessTime.put(pageNumber, tick);
             return new SimulationStep(pageNumber, false, new ArrayList<>(frames), null);
         }
 
-        // ── Page Fault ────────────────────────────────────────────────────────
+        // ── Page Fault ───────────────────────────────────────────────────────
         Integer evicted = null;
         if (frames.size() == frameCount) {
             evicted = findVictim();
-            frames.remove(evicted);                      // O(1)
-            evictCounts.merge(evicted, 1, Integer::sum); // evict count +1
+            frames.remove(evicted);
+            // 퇴출 이력 갱신: 횟수 +1, 마지막 퇴출 tick 기록
+            evictHistory.merge(
+                evicted,
+                new EvictRecord(1, tick),
+                (old, __) -> old.increment(tick)
+            );
         }
 
         frames.add(pageNumber);
+        accessCount.merge(pageNumber, 1, Integer::sum);
+        lastAccessTime.put(pageNumber, tick);
 
         return new SimulationStep(pageNumber, true, new ArrayList<>(frames), evicted);
     }
@@ -77,42 +142,93 @@ public class EvictCountAlgorithm implements PageReplacementAlgorithm {
     /**
      * Victim 선정 (1-pass O(n))
      *
-     * LinkedHashSet은 삽입 순으로 순회되므로
-     * 첫 번째로 발견된 minCount 페이지 = 가장 오래된 페이지
-     * → 별도의 2-pass 없이 FIFO 타이브레이킹이 자동으로 충족된다.
+     * 복합 점수(score)가 가장 낮은 페이지를 victim으로 선택한다.
      *
-     * 예) frames = [2, 3, 4], evictCounts = {2:1, 3:0, 4:0}
-     *     순회: 2(count=1) → 3(count=0, 새 min) → 4(count=0, 동점이지만 3이 먼저)
-     *     → victim = 3
+     *   age          = tick - lastEvictedAt
+     *   decayedEvict = evictCount / (1.0 + age * DECAY_RATE)   ← 시간 감쇠
+     *   score        = decayedEvict * EVICT_WEIGHT + accessCount
+     *
+     * score 동점이면 lastAccessTime이 가장 오래된 페이지를 선택 (LRU 타이브레이킹)
      */
     private Integer findVictim() {
-        Integer victim   = null;
-        int minCount = Integer.MAX_VALUE;
+        Integer victim    = null;
+        double  minScore  = Double.MAX_VALUE;
+        int     minAccess = Integer.MAX_VALUE;
 
         for (Integer page : frames) {
-            int count = evictCounts.getOrDefault(page, 0);
-            if (count < minCount) {
-                minCount = count;
-                victim   = page;
+            double score    = computeScore(page);
+            int    accessed = lastAccessTime.getOrDefault(page, 0);
+
+            if (score < minScore || (score == minScore && accessed < minAccess)) {
+                minScore  = score;
+                minAccess = accessed;
+                victim    = page;
             }
         }
         return victim;
     }
 
+    /**
+     * 페이지의 중요도 복합 점수 계산
+     *
+     * 점수가 낮을수록 덜 중요한 페이지 → victim 우선 대상
+     */
+    private double computeScore(int page) {
+        // 시간 감쇠가 적용된 evict 점수
+        EvictRecord record = evictHistory.get(page);
+        double decayedEvict;
+        if (record == null) {
+            decayedEvict = 0.0; // evict 이력 없음 → Cold Start 구간
+        } else {
+            int age = tick - record.lastEvictedAt(); // tick - 마지막으로 쫓겨난 시점
+            decayedEvict = record.count() / (1.0 + age * DECAY_RATE);
+        }
+
+        // accessCount 가중치 (Cold Start: 참조 적은 페이지가 낮은 점수)
+        int accesses = accessCount.getOrDefault(page, 0);
+
+        return decayedEvict * EVICT_WEIGHT + accesses;
+    }
+
+    // ── 초기화 ───────────────────────────────────────────────────────────────
+    /**
+     * 완전 초기화: 프레임 + 모든 이력 리셋
+     * 새로운 시뮬레이션을 처음부터 시작할 때 사용
+     */
     @Override
     public void reset() {
         frames.clear();
-        evictCounts.clear();
+        evictHistory.clear();
+        accessCount.clear();
+        lastAccessTime.clear();
+        tick = 0;
     }
 
+    /**
+     * 프레임만 초기화: 퇴출 이력(evictHistory)은 유지
+     * 이전 시뮬레이션의 워밍업 효과를 이어받고 싶을 때 사용
+     */
+    public void resetFramesOnly() {
+        frames.clear();
+        accessCount.clear();
+        lastAccessTime.clear();
+        // evictHistory 유지 → Cold Start 없이 바로 이력 기반 교체 가능
+    }
+
+    // ── 메타 정보 ────────────────────────────────────────────────────────────
     @Override
     public String getName()    { return "EvictCount"; }
 
     @Override
     public int getFrameCount() { return frameCount; }
 
-    /** 최종 퇴출 횟수 이력 테이블 반환 (출력용) */
-    public Map<Integer, Integer> getEvictCounts() {
-        return Collections.unmodifiableMap(evictCounts);
+    /** 현재 퇴출 이력 테이블 반환 (출력/디버그용) */
+    public Map<Integer, EvictRecord> getEvictHistory() {
+        return Collections.unmodifiableMap(evictHistory);
+    }
+
+    /** 현재 참조 횟수 테이블 반환 (출력/디버그용) */
+    public Map<Integer, Integer> getAccessCount() {
+        return Collections.unmodifiableMap(accessCount);
     }
 }
