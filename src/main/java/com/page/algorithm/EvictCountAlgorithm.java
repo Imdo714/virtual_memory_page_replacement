@@ -82,11 +82,10 @@ public class EvictCountAlgorithm implements PageReplacementAlgorithm {
     private final Map<Integer, Integer>     lastAccessTime; // 마지막 접근 tick (LRU 타이브레이킹)
     private int tick; // 논리 시계 (accessPage 호출마다 +1)
 
-    // ── 퇴출 이력 레코드 ────────────────────────────────────────────────────
     /**
-     * 페이지별 퇴출 이력
+     * 페이지별 퇴출 이력 레코드
      *
-     * @param count         누적 퇴출 횟수
+     * @param count  누적 퇴출 횟수
      * @param lastEvictedAt 마지막으로 퇴출된 tick (시간 감쇠 계산에 사용)
      */
     public record EvictRecord(int count, int lastEvictedAt) {
@@ -95,7 +94,6 @@ public class EvictCountAlgorithm implements PageReplacementAlgorithm {
         }
     }
 
-    // ── 생성자 ──────────────────────────────────────────────────────────────
     public EvictCountAlgorithm(int frameCount) {
         if (frameCount <= 0) throw new IllegalArgumentException("Frame count must be positive.");
         this.frameCount      = frameCount;
@@ -106,12 +104,11 @@ public class EvictCountAlgorithm implements PageReplacementAlgorithm {
         this.tick            = 0;
     }
 
-    // ── 핵심 로직 ────────────────────────────────────────────────────────────
     @Override
     public SimulationStep accessPage(int pageNumber) {
         tick++;
 
-        // ── Page Hit ─────────────────────────────────────────────────────────
+        // Page Hit
         if (frames.contains(pageNumber)) {
             // Hit 시 재삽입 제거 — lastAccessTime 갱신만으로 LRU 타이브레이킹 처리
             accessCount.merge(pageNumber, 1, Integer::sum);
@@ -119,17 +116,20 @@ public class EvictCountAlgorithm implements PageReplacementAlgorithm {
             return new SimulationStep(pageNumber, false, new ArrayList<>(frames), null);
         }
 
-        // ── Page Fault ───────────────────────────────────────────────────────
+        // Page Fault
         Integer evicted = null;
         if (frames.size() == frameCount) {
             evicted = findVictim();
             frames.remove(evicted);
-            // 퇴출 이력 갱신: 횟수 +1, 마지막 퇴출 tick 기록
-            evictHistory.merge(
-                evicted,
-                new EvictRecord(1, tick),
-                (old, __) -> old.increment(tick)
-            );
+
+            if (evictHistory.containsKey(evicted)) {
+                // 이미 쫓겨난 적 있으면 → increment()함수로 count++
+                EvictRecord old = evictHistory.get(evicted);
+                evictHistory.put(evicted, old.increment(tick));
+            } else {
+                // 처음 쫓겨났으면 count = 1로 객체 생성
+                evictHistory.put(evicted, new EvictRecord(1, tick));
+            }
         }
 
         frames.add(pageNumber);
@@ -151,13 +151,13 @@ public class EvictCountAlgorithm implements PageReplacementAlgorithm {
      * score 동점이면 lastAccessTime이 가장 오래된 페이지를 선택 (LRU 타이브레이킹)
      */
     private Integer findVictim() {
-        Integer victim    = null;
-        double  minScore  = Double.MAX_VALUE;
-        int     minAccess = Integer.MAX_VALUE;
+        Integer victim = null;
+        double minScore = Double.MAX_VALUE;
+        int minAccess = Integer.MAX_VALUE;
 
         for (Integer page : frames) {
-            double score    = computeScore(page);
-            int    accessed = lastAccessTime.getOrDefault(page, 0);
+            double score = computeScore(page);
+            int accessed = lastAccessTime.getOrDefault(page, 0);
 
             if (score < minScore || (score == minScore && accessed < minAccess)) {
                 minScore  = score;
@@ -177,14 +177,15 @@ public class EvictCountAlgorithm implements PageReplacementAlgorithm {
         // 시간 감쇠가 적용된 evict 점수
         EvictRecord record = evictHistory.get(page);
         double decayedEvict;
+
         if (record == null) {
             decayedEvict = 0.0; // evict 이력 없음 → Cold Start 구간
         } else {
             int age = tick - record.lastEvictedAt(); // tick - 마지막으로 쫓겨난 시점
-            decayedEvict = record.count() / (1.0 + age * DECAY_RATE);
+            decayedEvict = record.count() / (1.0 + age * DECAY_RATE); // 누적 퇴출 수 / (1.0 + age * 0.05)
         }
 
-        // accessCount 가중치 (Cold Start: 참조 적은 페이지가 낮은 점수)
+        // accessCount 가중치, 누적 참조 횟수 (Cold Start: 참조 적은 페이지가 낮은 점수)
         int accesses = accessCount.getOrDefault(page, 0);
 
         return decayedEvict * EVICT_WEIGHT + accesses;
