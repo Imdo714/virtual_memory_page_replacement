@@ -5,33 +5,26 @@ import com.page.model.SimulationStep;
 import java.util.*;
 
 /**
- * ════════════════════════════════════════════════════════════════
- *  Evict-Count Based 커스텀 페이지 교체 알고리즘 (개선판)
- * ════════════════════════════════════════════════════════════════
- *
  * [아이디어]
  *   "한 번 버려졌다 다시 불린 페이지는 자주 필요한 페이지다."
  *   퇴출(evict)된 횟수를 이력 테이블에 누적하여 중요도 지표로 활용한다.
  *   evict count가 높을수록 = 자주 필요했던 페이지 = 프레임에서 보호
  *   evict count가 낮을수록 = 덜 중요한 페이지  = 교체 우선 대상
  *
- * [개선 사항]
- *   1. Cold Start 보완
+ *   score 계산
  *      - accessCount(참조 횟수)를 복합 점수에 반영
  *      - 초반 evictCount = 0 구간에서 덜 참조된 페이지가 먼저 쫓겨남
  *      - score = evictCount * EVICT_WEIGHT + accessCount
  *
- *   2. 순환 참조 취약 보완 — 시간 감쇠(Time Decay)
+ *   순환 참조 취약 보완 — 시간 감쇠(Time Decay)
  *      - 마지막 퇴출 시점(tick)을 함께 기록
  *      - 오래된 evict 이력일수록 score 가중치 감소
  *      - decayedEvict = evictCount / (1.0 + age * DECAY_RATE)
  *
- *   3. Hit 시 재배치 제거 — LRU 타이브레이킹
- *      - 기존 Hit 시 frames 재삽입 제거 (부작용 원인)
- *      - 대신 lastAccessTime 맵으로 최근 접근 시점 추적
+ *   Hit 시 재배치 제거 — LRU 타이브레이킹
  *      - score 동점이면 가장 오래전에 접근한 페이지를 victim 선택 (LRU 방식)
  *
- *   4. reset 모드 분리
+ *   reset 모드 분리
  *      - reset()         : 프레임 + 이력 완전 초기화
  *      - resetFramesOnly(): 프레임만 초기화, 이력(evictHistory) 유지
  *
@@ -66,7 +59,6 @@ import java.util.*;
  * [하이퍼파라미터]
  *   DECAY_RATE   : 시간 감쇠 강도 (클수록 오래된 이력 빠르게 소멸)
  *   EVICT_WEIGHT : evictCount vs accessCount 가중치 비율
- * ════════════════════════════════════════════════════════════════
  */
 public class EvictCountAlgorithm implements PageReplacementAlgorithm {
 
@@ -191,10 +183,8 @@ public class EvictCountAlgorithm implements PageReplacementAlgorithm {
         return decayedEvict * EVICT_WEIGHT + accesses;
     }
 
-    // ── 초기화 ───────────────────────────────────────────────────────────────
     /**
      * 완전 초기화: 프레임 + 모든 이력 리셋
-     * 새로운 시뮬레이션을 처음부터 시작할 때 사용
      */
     @Override
     public void reset() {
@@ -213,22 +203,18 @@ public class EvictCountAlgorithm implements PageReplacementAlgorithm {
         frames.clear();
         accessCount.clear();
         lastAccessTime.clear();
-        // evictHistory 유지 → Cold Start 없이 바로 이력 기반 교체 가능
     }
 
-    // ── 메타 정보 ────────────────────────────────────────────────────────────
     @Override
     public String getName()    { return "EvictCount"; }
 
     @Override
     public int getFrameCount() { return frameCount; }
 
-    /** 현재 퇴출 이력 테이블 반환 (출력/디버그용) */
     public Map<Integer, EvictRecord> getEvictHistory() {
         return Collections.unmodifiableMap(evictHistory);
     }
 
-    /** 현재 참조 횟수 테이블 반환 (출력/디버그용) */
     public Map<Integer, Integer> getAccessCount() {
         return Collections.unmodifiableMap(accessCount);
     }

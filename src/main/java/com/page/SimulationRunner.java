@@ -186,7 +186,7 @@ public class SimulationRunner implements CommandLineRunner {
     }
 
     private void simulate(String algorithmType, int frameCount, int[] referenceString) {
-        PageReplacementAlgorithm algorithm = AlgorithmFactory.create(algorithmType, frameCount, referenceString);
+        PageReplacementAlgorithm algorithm = AlgorithmFactory.create(algorithmType, frameCount);
         Simulator simulator = new Simulator(algorithm);
         SimulationResult result = simulator.run(referenceString);
         printer.print(result);

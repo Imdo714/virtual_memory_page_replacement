@@ -7,7 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * NUR(Not Used Recently) 페이지 교체 알고리즘.
+ * NUR(Not Used Recently) 페이지 교체 알고리즘
  *
  * 참조 비트(R)와 수정 비트(M)를 사용해 페이지를 4개 클래스로 나눈 뒤,
  * 번호가 가장 낮은 클래스의 페이지를 교체 대상으로 선택한다.

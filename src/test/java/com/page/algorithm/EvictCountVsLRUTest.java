@@ -26,7 +26,6 @@ class EvictCountVsLRUTest {
         Result lru    = run(new LRUAlgorithm(frames), ref);
         Result evict  = run(new EvictCountAlgorithm(frames), ref);
         Result fifo   = run(new FIFOAlgorithm(frames), ref);
-        Result opt    = run(new OptimalAlgorithm(frames, ref), ref);
 
         String winner;
         if (evict.faults() < lru.faults())       winner = "✅ EvictCount WIN";
@@ -39,7 +38,6 @@ class EvictCountVsLRUTest {
         System.out.println("├──────────────┬───────────┬──────────────────────┤");
         System.out.println("│   알고리즘   │  Fault 수 │      Fault Rate      │");
         System.out.println("├──────────────┼───────────┼──────────────────────┤");
-        System.out.printf ("│ %-12s │     %3d   │      %5.1f%%          │%n", "Optimal(이상)", opt.faults(), opt.faultRate());
         System.out.printf ("│ %-12s │     %3d   │      %5.1f%%          │%n", "LRU",           lru.faults(), lru.faultRate());
         System.out.printf ("│ %-12s │     %3d   │      %5.1f%%          │%n", "EvictCount",    evict.faults(), evict.faultRate());
         System.out.printf ("│ %-12s │     %3d   │      %5.1f%%          │%n", "FIFO",          fifo.faults(), fifo.faultRate());
